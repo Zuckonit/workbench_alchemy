@@ -100,7 +100,7 @@ def exportTable(table):
         if index.indexType == 'PRIMARY':
             indices['PRIMARY'] += [c.referencedColumn.name for c in index.columns]
         if index.indexType == 'INDEX':
-            indices['INDEX'] += [c.referencedColumn.name for c in index.columns]
+            indices['INDEX'] += [(index.name, [c.referencedColumn.name for c in index.columns])]
         if index.indexType == 'UNIQUE':
             indices['UNIQUE'] += [(index.name, [c.referencedColumn.name for c in index.columns])]
 
@@ -137,7 +137,27 @@ def exportTable(table):
         table_args['mysql_charset'] = charset
     if sum([column.autoIncrement for column in table.columns]) > 0:
         table_args['sqlite_autoincrement'] = True
-    export.append("    __table_args__ = %s" % table_args)
+
+    uniques_multi = [i for i in indices['UNIQUE'] if len(i[1]) > 1]
+    uniques = []
+    if len(uniques_multi):
+        export.append("")
+        for index_name, columns in uniques_multi:
+            uniques.append("UniqueConstraint('%s', name='%s')" % ("', '".join(columns), index_name))
+
+    indexes_multi = [i for i in indices['INDEX'] if len(i[1]) > 1]
+    indexes = []
+    if len(indexes_multi):
+        export.append("")
+        for index_name, columns in indexes_multi:
+            indexes.append("Index('%s', '%s')" % (index_name, "', '".join(columns)))
+    
+    _table_args = []
+    _table_args.append(', '.join(uniques))
+    _table_args.append(', '.join(indexes))
+    _table_args.append(table_args)
+    _table_args = ', '.join([str(i) for i in _table_args if str(i).strip()])
+    export.append("    __table_args__ = (%s)" % _table_args)
 
     export.append("")
 
@@ -171,7 +191,9 @@ def exportTable(table):
                 aliases[column_name] = 'id'
             elif column.autoIncrement != 1:
                 column_options.append('autoincrement=False')
-        if column.name in indices['INDEX']:
+        #print indices['INDEX']
+        #print indices['UNIQUE']
+        if column.name in [i[1][0] for i in indices['INDEX'] if len(i[1]) == 1]:
             column_options.append('index=True')
         if column.name in [i[1][0] for i in indices['UNIQUE'] if len(i[1]) == 1]:
             column_options.append('unique=True')
@@ -184,11 +206,6 @@ def exportTable(table):
 
         export.append("    %s = Column(%s)" % (column_name, ', '.join(column_options)))
 
-    uniques_multi = [i for i in indices['UNIQUE'] if len(i[1]) > 1]
-    if len(uniques_multi):
-        export.append("")
-        for index_name, columns in uniques_multi:
-            export.append("    UniqueConstraint('%s', name='%s')" % ("', '".join(columns), index_name))
 
     if len(foreignKeys.items()):
         export.append("")
@@ -267,7 +284,7 @@ export.append("import datetime")
 export.append("")
 export.append("from sqlalchemy.orm import relationship")
 export.append("from sqlalchemy import Column, ForeignKey")
-export.append("from sqlalchemy.schema import UniqueConstraint")
+export.append("from sqlalchemy.schema import UniqueConstraint, Index")
 export.append("from sqlalchemy.ext.declarative import declarative_base")
 if len(types['sqla']):
     export.append("from sqlalchemy import %s" % ', '.join(types['sqla']))
